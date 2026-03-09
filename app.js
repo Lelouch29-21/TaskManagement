@@ -199,6 +199,7 @@ function createSeedState() {
     ],
     createdAt: pastHours(20),
     updatedAt: pastHours(3),
+    completedBy: [],
   };
 
   const taskB = {
@@ -251,6 +252,7 @@ function createSeedState() {
     ],
     createdAt: pastHours(16),
     updatedAt: pastHours(2),
+    completedBy: [],
   };
 
   const taskC = {
@@ -303,6 +305,7 @@ function createSeedState() {
     ],
     createdAt: pastHours(24),
     updatedAt: pastHours(4),
+    completedBy: [],
   };
 
   const taskD = {
@@ -362,6 +365,7 @@ function createSeedState() {
     ],
     createdAt: pastHours(30),
     updatedAt: pastHours(2),
+    completedBy: [],
   };
 
   const taskE = {
@@ -395,7 +399,7 @@ function createSeedState() {
   };
 
   return {
-    version: 8,
+    version: 9,
     users,
     tasks: [taskA, taskB, taskC, taskD, taskE],
     nudges: [
@@ -432,7 +436,7 @@ function loadState() {
   try {
     const parsed = JSON.parse(raw);
     // Force reseed if data is from an older schema version
-    if (!parsed.version || parsed.version < 8) {
+    if (!parsed.version || parsed.version < 9) {
       const seed = createSeedState();
       persistLocalState(seed);
       return seed;
@@ -560,6 +564,7 @@ function sanitizeState(input) {
           : [],
         createdAt: String(task.createdAt || new Date().toISOString()),
         updatedAt: String(task.updatedAt || task.createdAt || new Date().toISOString()),
+        completedBy: Array.isArray(task.completedBy) ? task.completedBy.filter((id) => typeof id === "string") : [],
       };
     });
 
@@ -1025,6 +1030,13 @@ function renderBucketSection(bucketTasks, user) {
 }
 
 function renderBoard(board, user) {
+  const involvementTasks = getHighInvolvementTasks(user.id);
+
+  // Manager/admin: tasks where any user has involvement >= 3
+  const managerInvolvementTasks = canManage(user)
+    ? sortedTasks().filter((t) => t.status !== "bucket" && hasHighInvolvement(t))
+    : [];
+
   return `
     <section class="panel pixel-panel">
       <div class="panel-header">
@@ -1038,6 +1050,32 @@ function renderBoard(board, user) {
         ${BOARD_STATUSES.map((status) => renderColumn(status, board[status], user)).join("")}
       </div>
     </section>
+
+    ${involvementTasks.length ? `
+    <section class="panel pixel-panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">My Involved Tasks</h2>
+          <p class="panel-subtitle">Tasks where your involvement level is 3 or above — you can mark these done independently.</p>
+        </div>
+      </div>
+      <div class="task-list" style="padding:1rem">
+        ${involvementTasks.map((task) => renderTaskCard(task, user, "involvement")).join("")}
+      </div>
+    </section>` : ""}
+
+    ${canManage(user) && managerInvolvementTasks.length ? `
+    <section class="panel pixel-panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">High Involvement Overview</h2>
+          <p class="panel-subtitle">Tasks where at least one team member has an involvement level of 3 or above.</p>
+        </div>
+      </div>
+      <div class="task-list" style="padding:1rem">
+        ${managerInvolvementTasks.map((task) => renderTaskCard(task, user, "manager-involvement")).join("")}
+      </div>
+    </section>` : ""}
   `;
 }
 
@@ -1116,6 +1154,17 @@ function renderTaskActions(task, user, section) {
     return `<button class="btn small success" data-action="pick-task" data-task-id="${escapeHtml(task.id)}" type="button">Take Task</button>`;
   }
 
+  if (section === "involvement") {
+    const alreadyDone = Array.isArray(task.completedBy) && task.completedBy.includes(user.id);
+    return alreadyDone
+      ? `<span class="pill" style="background:#d4edda;color:#1a6630">✓ Marked Done by You</span>`
+      : `<button class="btn small success" data-action="mark-involved-done" data-task-id="${escapeHtml(task.id)}" type="button">Mark Done for Me</button>`;
+  }
+
+  if (section === "manager-involvement") {
+    return ""; // read-only view for managers
+  }
+
   if (!canOperate) return "";
 
   if (task.status === "in_progress") {
@@ -1123,6 +1172,7 @@ function renderTaskActions(task, user, section) {
       <button class="btn small warn" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="blocked" type="button">Halt</button>
       <button class="btn small success" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="done" type="button">Complete</button>
       ${manager ? `<button class="btn small" data-action="quick-nudge" data-task-id="${escapeHtml(task.id)}" type="button">Nudge</button>` : ""}
+      ${isAssignee ? `<button class="btn small danger" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Return to Bucket</button>` : ""}
     `;
   }
 
@@ -1131,6 +1181,7 @@ function renderTaskActions(task, user, section) {
       <button class="btn small" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="in_progress" type="button">Resume</button>
       <button class="btn small success" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="done" type="button">Complete</button>
       ${manager ? `<button class="btn small" data-action="quick-nudge" data-task-id="${escapeHtml(task.id)}" type="button">Nudge</button>` : ""}
+      ${isAssignee ? `<button class="btn small danger" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Return to Bucket</button>` : ""}
     `;
   }
 
@@ -1609,6 +1660,41 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "return-to-bucket") {
+    const taskId = target.dataset.taskId;
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    if (task.assignedTo !== user.id && !canManage(user)) {
+      setFlash("You can only return tasks assigned to you.", "error");
+      render();
+      return;
+    }
+    task.assignedTo = null;
+    task.status = "bucket";
+    task.updatedAt = new Date().toISOString();
+    addHistory(task, user.id, `${user.name} returned the task to the bucket.`);
+    saveState();
+    setFlash("Task returned to bucket.", "success");
+    render();
+    return;
+  }
+
+  if (action === "mark-involved-done") {
+    const taskId = target.dataset.taskId;
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    if (!Array.isArray(task.completedBy)) task.completedBy = [];
+    if (!task.completedBy.includes(user.id)) {
+      task.completedBy.push(user.id);
+      task.updatedAt = new Date().toISOString();
+      addHistory(task, user.id, `${user.name} marked this task as done (involvement completion).`);
+      saveState();
+      setFlash("Marked as done for you.", "success");
+    }
+    render();
+    return;
+  }
+
   if (action === "move-status") {
     const taskId = target.dataset.taskId;
     const nextStatus = target.dataset.nextStatus;
@@ -2048,7 +2134,26 @@ function getStatFilterLabel(filter) {
   return "";
 }
 
-function getInvolvementEntries(task) {
+function getMyInvolvementStars(task, userId) {
+  if (!Array.isArray(task.involvement)) return 0;
+  const entry = task.involvement.find((e) => e.userId === userId);
+  return entry ? entry.stars : 0;
+}
+
+function getHighInvolvementTasks(userId) {
+  // Tasks where this user has involvement stars >= 3 (but is not the assignee)
+  return sortedTasks().filter((t) =>
+    t.assignedTo !== userId &&
+    t.status !== "bucket" &&
+    getMyInvolvementStars(t, userId) >= 3
+  );
+}
+
+function hasHighInvolvement(task) {
+  // Any user has involvement >= 3 (used by managers/admins)
+  if (!Array.isArray(task.involvement)) return false;
+  return task.involvement.some((e) => e.stars >= 3);
+}
   if (!Array.isArray(task.involvement)) return [];
 
   const byUser = new Map();
