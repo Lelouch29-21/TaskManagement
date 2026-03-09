@@ -1172,7 +1172,7 @@ function renderTaskActions(task, user, section) {
       <button class="btn small warn" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="blocked" type="button">Halt</button>
       <button class="btn small success" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="done" type="button">Complete</button>
       ${manager ? `<button class="btn small" data-action="quick-nudge" data-task-id="${escapeHtml(task.id)}" type="button">Nudge</button>` : ""}
-      ${isAssignee ? `<button class="btn small danger" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Return to Bucket</button>` : ""}
+      ${canOperate ? `<button class="btn small ghost" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Bucket</button>` : ""}
     `;
   }
 
@@ -1181,12 +1181,15 @@ function renderTaskActions(task, user, section) {
       <button class="btn small" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="in_progress" type="button">Resume</button>
       <button class="btn small success" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="done" type="button">Complete</button>
       ${manager ? `<button class="btn small" data-action="quick-nudge" data-task-id="${escapeHtml(task.id)}" type="button">Nudge</button>` : ""}
-      ${isAssignee ? `<button class="btn small danger" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Return to Bucket</button>` : ""}
+      ${canOperate ? `<button class="btn small ghost" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Bucket</button>` : ""}
     `;
   }
 
   if (task.status === "done") {
-    return `<button class="btn small" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="in_progress" type="button">Reopen</button>`;
+    return `
+      <button class="btn small" data-action="move-status" data-task-id="${escapeHtml(task.id)}" data-next-status="in_progress" type="button">Reopen</button>
+      ${canOperate ? `<button class="btn small ghost" data-action="return-to-bucket" data-task-id="${escapeHtml(task.id)}" type="button">↩ Bucket</button>` : ""}
+    `;
   }
 
   return "";
